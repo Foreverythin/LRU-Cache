@@ -8,17 +8,18 @@
 
 using namespace std;
 
+#define OPERATION_GET "get"
+#define OPERATION_ADD "add"
+
 typedef struct Operation {
     string opType;
     string key;
     string value;
 } Operation;
 
-vector<Operation> operations;
+int DISK_LATENCY = 1500;  // in nanoseconds
 
-double DISK_LATENCY = 1.5;
-string OPERATION_GET = "get";
-string OPERATION_ADD = "add";
+vector<Operation> operations;
 
 int main() {
     ifstream file("../../cluster045.txt");
@@ -56,14 +57,14 @@ int main() {
         if (op.opType == OPERATION_ADD) {
             cache.add(op.key, op.value);
             // wait for disk latency
-            this_thread::sleep_for(chrono::microseconds(5));
+            this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
         } else if (op.opType == OPERATION_GET) {
             string value = cache.get(op.key);
             if (!value.empty()) {
                 hits++;
             } else {
                 // wait for disk latency
-                this_thread::sleep_for(chrono::microseconds(5));
+                this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
                 cache.add(op.key, op.value);
             }
         }
