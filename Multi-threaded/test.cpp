@@ -1,13 +1,12 @@
-#include <thread>
 #include <iostream>
-#include <vector>
-#include <string>
-#include <chrono>
 #include <fstream>
 #include <sstream>
+#include <vector>
+#include <chrono>
+#include <thread>
+#include <atomic>
 
-#include "lru.cpp"
-#include "LinkedList.cpp"
+#include "SamplingLRUCache.hpp"
 
 using namespace std;
 
@@ -20,12 +19,48 @@ typedef struct Operation {
     string value;
 } Operation;
 
-int DISK_LATENCY = 1500;  // in nanoseconds
+int DISK_LATENCY = 5000;  // in nanoseconds
 
 vector<Operation> operations;
 
-int main(void) {
-    ifstream file("../../cluster045.txt");
+size_t requests = 0;
+
+size_t hits = 0;
+
+void task(SamplingLRUCache<string, string>& cache, Operation& op){
+    requests++;
+    if (op.opType == OPERATION_ADD) {
+        cache.put(op.key, op.value);
+        // wait for disk latency
+        this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
+    } else if (op.opType == OPERATION_GET) {
+        string value = cache.get(op.key);
+        if (!value.empty()) {
+            hits++;
+        } else {
+            // wait for disk latency
+            this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
+            cache.put(op.key, op.value);
+        }
+    }
+}
+
+void execute(SamplingLRUCache<string, string>& cache, vector<Operation>& operations_, atomic<int>& index) {
+    while (true) {
+        int i = index.fetch_add(1);
+        if (i >= operations_.size()) {
+            break;
+        }
+        Operation op = operations_[i];
+        task(cache, op);
+        if (i % 10000 == 0) {
+            std::cout << "Thread " << this_thread::get_id() << " executes task " << i  << "\n";
+        }
+    }
+}
+
+int main() {
+    ifstream file("../../cluster022_5.txt");
     string line;
 
     while(getline(file, line)) {
@@ -42,37 +77,26 @@ int main(void) {
         operations.push_back(op);
     }
 
-    LRUCache<string, string> cache(100000, 10);
-
-    size_t requests = 0;
-    size_t hits = 0;
+    SamplingLRUCache<string, string> cache(10000, 10);
 
     long duration = 0;
 
     cout << "Start processing..." << endl;
+    auto start = chrono::high_resolution_clock::now();
 
-    for (auto op : operations) {
-        requests++;
-        auto eachStart = chrono::high_resolution_clock::now();
-        if (op.opType == OPERATION_ADD) {
-            cache.add(op.key, op.value);
-            // wait for disk latency
-            this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
-        } else if (op.opType == OPERATION_GET) {
-            string value = cache.get(op.key);
-            if (!value.empty()) {
-                hits++;
-            } else {
-                // wait for disk latency
-                this_thread::sleep_for(chrono::nanoseconds(DISK_LATENCY));
-                cache.add(op.key, op.value);
-            }
-        }
-        auto eachEnd = chrono::high_resolution_clock::now();
-        auto eachDuration = chrono::duration_cast<chrono::microseconds>(eachEnd - eachStart);
-
-        duration += eachDuration.count();
+    atomic<int> index(0);
+    vector<thread> threads(20);
+    for (int i = 0; i < 20; i++) {
+        threads[i] = thread(execute, ref(cache), ref(operations), ref(index));
     }
+
+    // 等待所有线程结束
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    auto end = chrono::high_resolution_clock::now();
+    duration = chrono::duration_cast<chrono::milliseconds>(end - start).count();
 
     cout << "End processing..." << endl;
     cout << "-----------------Results-------------------" << endl;
@@ -82,6 +106,7 @@ int main(void) {
     cout << "hit ratio: " << (double)hits / requests << endl;
     cout << "total latency: " << duration << endl;
     cout << "average latency: " << (double)duration / requests << endl;
+
 
     return 0;
 }
