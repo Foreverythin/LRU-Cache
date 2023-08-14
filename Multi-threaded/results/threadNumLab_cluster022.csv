@@ -1,0 +1,3 @@
+requests,numThread,cacheSize,hitRatio,throughput,hitLatency
+50000,20-thread,10000,0.11876,270.781,3.69
+50000,72-thread,10000,0.11072,261.808,3.82

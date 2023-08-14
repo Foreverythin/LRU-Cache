@@ -3,36 +3,63 @@
 
 #include <shared_mutex>
 #include <random>
+#include <queue>
 
 #include "libcuckoo/cuckoohash_map.hh"
 
+
+/**
+ * @brief A cache value class that stores the value and the number of times it has been accessed.
+ *
+ * @tparam V The type of the value.
+ */
 template <typename V>
 struct CacheValue {
     V value;
     std::chrono::time_point<std::chrono::steady_clock> lastAccessed;
 };
 
+/**
+ * @brief A LRU cache class implemented by a hash map and the sampling algorithm.
+ *
+ * @tparam Key The type of the key.
+ * @tparam Value The type of the value.
+ */
 template <typename Key, typename Value>
 class SamplingLRUCache {
 private:
-    libcuckoo::cuckoohash_map<Key, CacheValue<Value> > map_;
+    libcuckoo::cuckoohash_map<Key, CacheValue<Value> > map_;  // map from key to value
     int capacity_;  // Maximum number of elements in the cache
     int sampleSize_;  // Number of elements to sample
     std::shared_mutex mutex_;  // Mutex for locking the cache
 
 public:
-    SamplingLRUCache(int capacity, int sampleSize) : capacity_(capacity), sampleSize_(sampleSize) {}
+    SamplingLRUCache(int capacity, int sampleSize) : capacity_(capacity), sampleSize_(sampleSize) {}  // constructor
 
+    /**
+     * @brief Get a new item from the cache.
+     *
+     * @param key The key of the item.
+     * @return Value
+     */
     Value get(const Key& key) {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         if (map_.contains(key)) {
-            map_.lock_table()[key].lastAccessed = std::chrono::steady_clock::now();
-//            std::cout << "Timestamp:   " << std::chrono::duration_cast<std::chrono::milliseconds>(map_.find(key).lastAccessed.time_since_epoch()).count() << std::endl;
-            return map_.lock_table()[key].value;
+            auto lockedMap = map_.lock_table();
+            lockedMap[key].lastAccessed = std::chrono::steady_clock::now();
+            Value value = lockedMap[key].value;
+            lockedMap.unlock();
+            return value;
         }
         return Value();
     }
 
+    /**
+     * @brief Put a new item into the cache.
+     *
+     * @param key The key of the item.
+     * @param value The value of the item.
+     */
     void put(const Key& key, const Value& value) {
         std::unique_lock<std::shared_mutex> lock(mutex_);
         CacheValue<Value> cv;
@@ -50,6 +77,9 @@ public:
         map_.insert(key, cv);
     }
 
+    /**
+     * @brief Evict an item from the cache using the sampling algorithm.
+     */
     void evict() {
         if (map_.empty()) {
             return;
@@ -60,24 +90,23 @@ public:
         std::chrono::time_point<std::chrono::steady_clock> minTime;
         std::vector<std::pair<Key, CacheValue<Value> > > samples;
         auto lockTable = map_.lock_table();
+        // Sample sampleSize_ items from the cache
         std::sample(lockTable.begin(), lockTable.end(), std::back_inserter(samples), sampleSize_, gen);
-//        // show samples
-//        std::cout << "=======SAMPLES========" << std::endl;
-//        for (auto it = samples.begin(); it != samples.end(); ++it) {
-//            std::cout << "key:   " << it->first << std::endl;
-//            std::cout << "value:   " << it->second.value << std::endl;
-//            std::cout << "timestamp:   " << std::chrono::duration_cast<std::chrono::milliseconds>(it->second.lastAccessed.time_since_epoch()).count() << std::endl;
-//        }
         minTime = samples[0].second.lastAccessed;
+        // Find the item with the minimum lastAccessed time
         for (auto& sample : samples) {
             if (sample.second.lastAccessed <= minTime) {
                 minTime = sample.second.lastAccessed;
                 minKey = sample.first;
             }
         }
-        lockTable.erase(minKey);
+        lockTable.erase(minKey);  // Erase the item with the minimum lastAccessed time
+        lockTable.unlock();
     }
 
+    /**
+     * @brief Print the cache contents.
+     */
     void print() {
         std::cout << "Cache contents:" << std::endl;
         for (auto& kv : map_.lock_table()) {
