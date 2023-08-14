@@ -1,5 +1,4 @@
 # LRU-Cache
----------------
 LRU cache implementation in C++.
 
 ### Two kinds of LRU cache are implemented.
