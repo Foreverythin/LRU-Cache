@@ -65,7 +65,7 @@ for rect in rects2:
                 ha='center', va='bottom')
 
 # Add some texts
-ax.set_ylabel('Average hit latency(ms)')
+ax.set_ylabel('Average hit latency(us)')
 ax.set_xlabel('Thread Num', fontweight='bold')
 ax.set_xticks(x)
 ax.set_yticks(y)
